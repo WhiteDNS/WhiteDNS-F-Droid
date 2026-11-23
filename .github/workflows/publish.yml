@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '17 2,8,14,20 * * *'
+    - cron: '23 3 1 * *'
 
 concurrency:
   group: fdroid-pages
@@ -11,6 +12,7 @@ concurrency:
 
 jobs:
   publish:
+    if: github.event.schedule != '23 3 1 * *'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -67,7 +69,7 @@ jobs:
               }, config)
           PY
           umask 022
-          fdroid update --create-metadata
+          fdroid update --create-metadata --rename-apks
           test -s repo/entry.jar
           jq -e '.packages | keys == ["com.whitedns.vpn", "com.whitedns.whiteaesther", "shop.whitedns.client"]' repo/index-v2.json
           fingerprint="$(keytool -exportcert -alias whitedns-fdroid -keystore "$FDROID_KEYSTORE" -storepass:env FDROID_KEYSTORE_PASSWORD | sha256sum | cut -d ' ' -f 1)"
@@ -85,3 +87,18 @@ jobs:
 
       - uses: actions/deploy-pages@v5
         id: deploy
+
+  keep-schedule-active:
+    # GitHub disables schedules after 60 days of inactivity in public repositories.
+    if: github.event.schedule == '23 3 1 * *'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Record monthly maintenance
+        run: |
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit --allow-empty -m 'Keep the F-Droid release schedule active'
+          git push origin "HEAD:$GITHUB_REF_NAME"
