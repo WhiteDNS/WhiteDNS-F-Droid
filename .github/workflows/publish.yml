@@ -34,8 +34,7 @@ jobs:
 
       - name: Install F-Droid tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends fdroidserver
+          pipx install fdroidserver==2.4.5
 
       - name: Sign and verify the index
         working-directory: build/fdroid
@@ -75,6 +74,10 @@ jobs:
           printf 'Add in F-Droid: %s/fdroid/repo?fingerprint=%s\n' "${PAGES_URL%/}" "$fingerprint" >> "$GITHUB_STEP_SUMMARY"
           mkdir -p ../site/fdroid
           mv repo ../site/fdroid/
+          repo_address="${PAGES_URL%/}/fdroid/repo"
+          sed -e "s|REPO_URL|${repo_address}?fingerprint=$fingerprint|g" \
+              -e "s|ADD_URL|fdroidrepos://${repo_address#https://}/?fingerprint=$fingerprint|g" \
+              ../../index.html > ../site/index.html
 
       - uses: actions/upload-pages-artifact@v5
         with:

@@ -1,6 +1,6 @@
 # WhiteDNS F-Droid repository
 
-Install and update WhiteAesther, WhiteVPN and WhiteDNS Android from a single repository in F-Droid. Add the repository URL with its signing fingerprint from the latest successful Publish F-Droid repository run.
+Install and update WhiteAesther, WhiteVPN and WhiteDNS Android from a single repository in F-Droid. Open the setup page on your Android device and tap the button to add the repository. [Add WhiteDNS to F-Droid](https://whitedns.github.io/WhiteDNS-F-Droid/)
 
 The workflow checks GitHub Releases every six hours and can also run manually. It downloads the latest stable universal APK for each app, checks the GitHub asset digest and the app's package ID and release certificate, then publishes all three together on GitHub Pages. Each APK keeps its original signature.
 
