@@ -1,0 +1,84 @@
+name: Publish F-Droid repository
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 2,8,14,20 * * *'
+
+concurrency:
+  group: fdroid-pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/configure-pages@v6
+        id: pages
+
+      - name: Fetch and verify APKs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          export PATH="$ANDROID_HOME/build-tools/36.0.0:$PATH"
+          python3 fetch-apks.py build/fdroid/repo
+
+      - name: Install F-Droid tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fdroidserver
+
+      - name: Sign and verify the index
+        working-directory: build/fdroid
+        env:
+          PAGES_URL: ${{ steps.pages.outputs.base_url }}
+          FDROID_KEYSTORE_BASE64: ${{ secrets.FDROID_KEYSTORE_BASE64 }}
+          FDROID_KEYSTORE_PASSWORD: ${{ secrets.FDROID_KEYSTORE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          : "${FDROID_KEYSTORE_BASE64:?Set FDROID_KEYSTORE_BASE64}"
+          : "${FDROID_KEYSTORE_PASSWORD:?Set FDROID_KEYSTORE_PASSWORD}"
+          export FDROID_KEYSTORE="$(mktemp)"
+          trap 'rm -f -- "$FDROID_KEYSTORE" config.yml' EXIT
+          printf '%s' "$FDROID_KEYSTORE_BASE64" | base64 --decode > "$FDROID_KEYSTORE"
+          python3 - <<'PY'
+          import json
+          import os
+
+          with open("config.yml", "w") as config:
+              json.dump({
+                  "repo_url": os.environ["PAGES_URL"].rstrip("/") + "/fdroid/repo",
+                  "repo_name": "WhiteDNS",
+                  "repo_description": "Official Android builds of WhiteAesther, WhiteVPN and WhiteDNS.",
+                  "archive_older": 0,
+                  "keystore": os.environ["FDROID_KEYSTORE"],
+                  "repo_keyalias": "whitedns-fdroid",
+                  "keystorepass": os.environ["FDROID_KEYSTORE_PASSWORD"],
+                  "keypass": os.environ["FDROID_KEYSTORE_PASSWORD"],
+              }, config)
+          PY
+          umask 022
+          fdroid update --create-metadata
+          test -s repo/entry.jar
+          jq -e '.packages | keys == ["com.whitedns.vpn", "com.whitedns.whiteaesther", "shop.whitedns.client"]' repo/index-v2.json
+          fingerprint="$(keytool -exportcert -alias whitedns-fdroid -keystore "$FDROID_KEYSTORE" -storepass:env FDROID_KEYSTORE_PASSWORD | sha256sum | cut -d ' ' -f 1)"
+          printf 'Add in F-Droid: %s/fdroid/repo?fingerprint=%s\n' "${PAGES_URL%/}" "$fingerprint" >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p ../site/fdroid
+          mv repo ../site/fdroid/
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: build/site
+
+      - uses: actions/deploy-pages@v5
+        id: deploy
