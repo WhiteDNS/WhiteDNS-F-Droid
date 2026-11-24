@@ -17,11 +17,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      pages: read
     steps:
       - uses: actions/checkout@v7
       - uses: actions/configure-pages@v6
@@ -88,6 +84,17 @@ jobs:
         with:
           path: build/site
 
+  deploy:
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
       - uses: actions/deploy-pages@v5
         id: deploy
 
