@@ -10,6 +10,9 @@ concurrency:
   group: fdroid-pages
   cancel-in-progress: false
 
+env:
+  FDROID_MIRROR_ORIGIN: ${{ vars.FDROID_MIRROR_ORIGIN }}
+
 jobs:
   publish:
     if: github.event.schedule != '23 3 1 * *'
@@ -30,6 +33,7 @@ jobs:
           export PATH="$ANDROID_HOME/build-tools/36.0.0:$PATH"
           python3 -m unittest discover
           python3 fetch-apks.py build/fdroid/repo
+          cp -r metadata build/fdroid/
 
       - name: Install F-Droid tools
         run: |
@@ -52,18 +56,24 @@ jobs:
           python3 - <<'PY'
           import json
           import os
+          import re
 
-          with open("config.yml", "w") as config:
-              json.dump({
-                  "repo_url": os.environ["PAGES_URL"].rstrip("/") + "/fdroid/repo",
-                  "repo_name": "WhiteDNS",
-                  "repo_description": "Official Android builds of WhiteAesther, WhiteVPN and WhiteDNS.",
-                  "archive_older": 0,
-                  "keystore": os.environ["FDROID_KEYSTORE"],
-                  "repo_keyalias": "whitedns-fdroid",
-                  "keystorepass": os.environ["FDROID_KEYSTORE_PASSWORD"],
-                  "keypass": os.environ["FDROID_KEYSTORE_PASSWORD"],
-              }, config)
+          config = {
+              "repo_url": os.environ["PAGES_URL"].rstrip("/") + "/fdroid/repo",
+              "repo_name": "WhiteDNS",
+              "repo_description": "Official Android builds of WhiteAesther, WhiteVPN and WhiteDNS.",
+              "archive_older": 0,
+              "keystore": os.environ["FDROID_KEYSTORE"],
+              "repo_keyalias": "whitedns-fdroid",
+              "keystorepass": os.environ["FDROID_KEYSTORE_PASSWORD"],
+              "keypass": os.environ["FDROID_KEYSTORE_PASSWORD"],
+          }
+          if mirror := os.environ["FDROID_MIRROR_ORIGIN"]:
+              if not re.fullmatch(r"https://(?:[a-z0-9-]+\.)+[a-z0-9-]+", mirror):
+                  raise SystemExit("FDROID_MIRROR_ORIGIN must be an HTTPS origin without a path")
+              config["mirrors"] = [mirror + "/fdroid"]
+          with open("config.yml", "w") as file:
+              json.dump(config, file)
           PY
           umask 022
           apk_count="$(find repo -maxdepth 1 -type f -name '*.apk' | wc -l)"
@@ -71,6 +81,7 @@ jobs:
           test -s repo/entry.jar
           jq -e '.packages | keys == ["com.whitedns.vpn", "com.whitedns.whiteaesther", "shop.whitedns.client"]' repo/index-v2.json
           jq -e --argjson count "$apk_count" '[.packages[].versions[]] | length == $count' repo/index-v2.json
+          jq -e 'all(.packages[].metadata; .authorWebSite == "https://t.me/WhiteDnsAdmin" and .donate == ["https://whitedns.online/"] and .sourceCode and .issueTracker and .changelog)' repo/index-v2.json
           fingerprint="$(keytool -exportcert -alias whitedns-fdroid -keystore "$FDROID_KEYSTORE" -storepass:env FDROID_KEYSTORE_PASSWORD | sha256sum | cut -d ' ' -f 1)"
           printf 'Add in F-Droid: %s/fdroid/repo?fingerprint=%s\n' "${PAGES_URL%/}" "$fingerprint" >> "$GITHUB_STEP_SUMMARY"
           mkdir -p ../site/fdroid
@@ -79,6 +90,24 @@ jobs:
           sed -e "s|REPO_URL|${repo_address}?fingerprint=$fingerprint|g" \
               -e "s|ADD_URL|fdroidrepos://${repo_address#https://}/?fingerprint=$fingerprint|g" \
               ../../index.html > ../site/index.html
+          test "$(du -sb ../site | cut -f1)" -lt 1000000000
+          if [[ -n "$FDROID_MIRROR_ORIGIN" ]]; then
+            mirror_address="$FDROID_MIRROR_ORIGIN/fdroid/repo"
+            jq -e --arg url "$mirror_address" '.repo.mirrors | any(.url == $url)' ../site/fdroid/repo/index-v2.json
+            sed -e "s|REPO_URL|${mirror_address}?fingerprint=$fingerprint|g" \
+                -e "s|ADD_URL|fdroidrepos://${mirror_address#https://}/?fingerprint=$fingerprint|g" \
+                ../../index.html > ../mirror-index.html
+          fi
+
+      - name: Publish and verify the R2 mirror
+        if: vars.FDROID_MIRROR_ORIGIN != ''
+        env:
+          FDROID_R2_BUCKET: ${{ vars.FDROID_R2_BUCKET }}
+          FDROID_R2_ENDPOINT: ${{ vars.FDROID_R2_ENDPOINT }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.FDROID_R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.FDROID_R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: bash .github/scripts/publish-r2.sh
 
       - uses: actions/upload-pages-artifact@v5
         with:

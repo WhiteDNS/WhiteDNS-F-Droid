@@ -1,0 +1,9 @@
+AuthorName: WhiteDNS
+AuthorWebSite: https://t.me/WhiteDnsAdmin
+WebSite: https://whitedns.online/
+SourceCode: https://github.com/WhiteDNS/WhiteDNS-Android
+IssueTracker: https://github.com/WhiteDNS/WhiteDNS-Android/issues
+Changelog: https://github.com/WhiteDNS/WhiteDNS-Android/releases
+Description: |
+  The official WhiteDNS encrypted DNS client for Android. The terms are in LICENSE.MD in the source repository under the WhiteDNS Source-Available Proprietary License.
+Donate: https://whitedns.online/

@@ -3,10 +3,14 @@ import json
 import re
 import subprocess
 import sys
+from itertools import zip_longest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 
 ABI_CODES = {"armeabi-v7a": 1, "arm64-v8a": 2, "x86": 3, "x86_64": 4}
+# GitHub Pages limits the whole site to 1 GB. Reserve space for index files and icons.
+APK_BUDGET = 998_500_000
 APPS = (
     ("WhiteAestherMobile", "com.whitedns.whiteaesther",
      "c67cf2422c3833375bb194bb452ebd5af4d2d2dac04d84b79c300295b84c6ebf",
@@ -49,17 +53,26 @@ def download_apk(source, tag, asset, apk, package, expected_signer, expected_abi
     return version_code
 
 
-def fetch_apks(app, package, expected_signer, legacy_tag, legacy_code, abis, destination):
-    source = f"WhiteDNS/{app}"
-    release = json.loads(subprocess.check_output(
-        ["gh", "api", f"repos/{source}/releases/latest"],
+def github_releases(app, endpoint):
+    return json.loads(subprocess.check_output(
+        ["gh", "api", f"repos/WhiteDNS/{app}/releases{endpoint}"],
     ))
+
+
+def version(tag):
+    if re.fullmatch(r"v?\d+\.\d+\.\d+", tag):
+        return tuple(map(int, tag.removeprefix("v").split(".")))
+    return ()
+
+
+def release_assets(source, release, legacy_tag, abis):
     if release["draft"] or release["prerelease"]:
         raise SystemExit(f"{source}: expected a stable, published release")
 
     tag = release["tag_name"]
-    legacy = tag == legacy_tag
-    codes = {}
+    number = version(tag)
+    legacy = tag == legacy_tag or (number and number < version(legacy_tag))
+    selected = {}
     for abi in ("universal",) if legacy else abis:
         assets = [
             asset for asset in release["assets"]
@@ -67,22 +80,80 @@ def fetch_apks(app, package, expected_signer, legacy_tag, legacy_code, abis, des
         ]
         if len(assets) != 1 or not re.fullmatch(r"sha256:[0-9a-f]{64}", assets[0].get("digest") or ""):
             raise SystemExit(f"{source}: expected exactly one {abi} APK with a SHA-256 digest")
-        apk = destination / f"{package}-{abi}.apk"
-        codes[abi] = download_apk(source, tag, assets[0], apk, package, expected_signer,
-                                  abis if legacy else (abi,))
+        selected[abi] = assets[0]
+    return selected
 
-    if legacy:
-        if codes["universal"] != legacy_code:
-            raise SystemExit(f"{source}: unexpected legacy APK version code")
-        return
 
-    base_codes = {code - ABI_CODES[abi] for abi, code in codes.items()}
-    if min(codes.values()) <= legacy_code or len(base_codes) != 1 or min(base_codes) % 10 != 0:
-        raise SystemExit(f"{source}: incompatible APK version codes {codes}")
+def fetch_apks(app, package, expected_signer, legacy_tag, legacy_code, abis,
+               destination, release, assets, newer_code=None):
+    source = f"WhiteDNS/{app}"
+    tag = release["tag_name"]
+    with TemporaryDirectory(dir=destination.parent) as scratch:
+        files = {}
+        codes = {}
+        for abi, asset in assets.items():
+            files[abi] = Path(scratch) / f"{abi}.apk"
+            codes[abi] = download_apk(source, tag, asset, files[abi], package, expected_signer,
+                                      abis if abi == "universal" else (abi,))
+
+        if "universal" in codes:
+            code = codes["universal"]
+            if code > legacy_code or tag == legacy_tag and code != legacy_code:
+                raise SystemExit(f"{source}: unexpected legacy APK version code")
+        else:
+            base_codes = {code - ABI_CODES[abi] for abi, code in codes.items()}
+            if min(codes.values()) <= legacy_code or len(base_codes) != 1 or min(base_codes) % 10 != 0:
+                raise SystemExit(f"{source}: incompatible APK version codes {codes}")
+
+        if newer_code is not None and max(codes.values()) >= newer_code:
+            raise SystemExit(f"{source}: historical APKs must rank below newer releases")
+        for abi, file in files.items():
+            file.rename(destination / f"{package}_{codes[abi]}.apk")
+    return min(codes.values())
+
+
+def recent_history(app, latest_tag):
+    latest = version(latest_tag)
+    seen = set()
+    recent = []
+    for release in sorted(github_releases(app, "?per_page=30"),
+                          key=lambda item: version(item["tag_name"]), reverse=True):
+        number = version(release["tag_name"])
+        if number and number < latest and number not in seen and not (release["draft"] or release["prerelease"]):
+            seen.add(number)
+            recent.append(release)
+            if len(recent) == 2:
+                break
+    return recent
+
+
+def publish_apks(destination):
+    remaining = APK_BUDGET
+    newest_codes = {}
+    releases = [github_releases(app[0], "/latest") for app in APPS]
+    history = zip_longest(*(recent_history(app[0], release["tag_name"])
+                            for app, release in zip(APPS, releases)))
+    for batch in (releases, *history):
+        for app, release in zip(APPS, batch):
+            if release is None:
+                continue
+            source, package, _, legacy_tag, _, abis = app
+            newer_code = newest_codes.get(package)
+            try:
+                assets = release_assets(source, release, legacy_tag, abis)
+                size = sum(asset["size"] for asset in assets.values())
+                if size > remaining:
+                    raise SystemExit("APK budget for GitHub Pages exceeded")
+                newest_codes[package] = fetch_apks(*app, destination, release, assets, newer_code)
+            except (SystemExit, subprocess.CalledProcessError) as error:
+                if newer_code is None:
+                    raise
+                print(f"Skipped history for {source} {release['tag_name']}: {error}", flush=True)
+                continue
+            remaining -= size
 
 
 if __name__ == "__main__":
     destination = Path(sys.argv[1])
     destination.mkdir(parents=True, exist_ok=True)
-    for app in APPS:
-        fetch_apks(*app, destination)
+    publish_apks(destination)
