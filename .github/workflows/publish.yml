@@ -32,6 +32,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           export PATH="$ANDROID_HOME/build-tools/36.0.0:$PATH"
+          python3 -m unittest discover
           python3 fetch-apks.py build/fdroid/repo
 
       - name: Install F-Droid tools

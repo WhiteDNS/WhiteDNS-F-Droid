@@ -9,7 +9,7 @@
 
 Install and update WhiteAesther, WhiteVPN and WhiteDNS Android from a single repository in F-Droid. Open the setup page on your Android device and tap the button to add the repository.
 
-The workflow checks GitHub Releases every six hours and can also run manually. It downloads the latest stable universal APK for each app, checks the GitHub asset digest and the app's package ID and release certificate, then publishes all three together on GitHub Pages. Each APK keeps its original signature.
+The workflow checks GitHub Releases every six hours and can also run manually. It verifies each stable APK's digest, package ID, release certificate, architecture and version code before publishing on GitHub Pages. F-Droid selects a smaller APK compatible with the device. An app remains on its last universal release until it publishes architecture-specific APKs with distinct version codes.
 
 A separate monthly job records a maintenance commit so GitHub keeps running the schedule when this repository is otherwise idle.
 
