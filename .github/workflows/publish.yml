@@ -70,9 +70,11 @@ jobs:
               }, config)
           PY
           umask 022
+          apk_count="$(find repo -maxdepth 1 -type f -name '*.apk' | wc -l)"
           fdroid update --create-metadata --rename-apks
           test -s repo/entry.jar
           jq -e '.packages | keys == ["com.whitedns.vpn", "com.whitedns.whiteaesther", "shop.whitedns.client"]' repo/index-v2.json
+          jq -e --argjson count "$apk_count" '[.packages[].versions[]] | length == $count' repo/index-v2.json
           fingerprint="$(keytool -exportcert -alias whitedns-fdroid -keystore "$FDROID_KEYSTORE" -storepass:env FDROID_KEYSTORE_PASSWORD | sha256sum | cut -d ' ' -f 1)"
           printf 'Add in F-Droid: %s/fdroid/repo?fingerprint=%s\n' "${PAGES_URL%/}" "$fingerprint" >> "$GITHUB_STEP_SUMMARY"
           mkdir -p ../site/fdroid
